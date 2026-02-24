@@ -191,11 +191,11 @@ function toast(msg,type,ms){
 
 // ========== CROSS-ORIGIN COMMUNICATION ==========
 
-// SENDING data: use form + iframe (reliable cross-origin)
+// SENDING data: use script tag (same as JSONP - proven to work cross-origin)
 function sendToSheet(entry,cb){
   var d=new Date(entry.clockIn);
   var actLabel=entry.activityId==="other"&&entry.note?"אחר: "+entry.note:(ACTIVITIES.filter(function(a){return a.id===entry.activityId})[0]||{}).label||"";
-  var fields={
+  var params=new URLSearchParams({
     action:"log_entry",
     employeeName:S.name,
     email:S.email,
@@ -205,42 +205,36 @@ function sendToSheet(entry,cb){
     clockOut:fm(entry.clockOut),
     hours:hr(entry.durationMs),
     activity:actLabel,
-    note:""
-  };
+    note:"",
+    callback:"_sendCb"+Date.now()
+  });
   
-  var frameName="sf_"+Date.now();
-  var iframe=document.createElement("iframe");
-  iframe.name=frameName;
-  iframe.style.display="none";
-  document.body.appendChild(iframe);
-  
-  var form=document.createElement("form");
-  form.method="GET";
-  form.action=SCRIPT_URL;
-  form.target=frameName;
-  form.style.display="none";
-  
-  for(var k in fields){
-    var inp=document.createElement("input");
-    inp.type="hidden";inp.name=k;inp.value=fields[k];
-    form.appendChild(inp);
-  }
-  document.body.appendChild(form);
-  
+  var cbName=params.get("callback");
   var done=false;
-  iframe.onload=function(){
+  
+  window[cbName]=function(){
     if(done)return;done=true;
-    setTimeout(function(){try{iframe.remove();form.remove()}catch(e){}},3000);
+    try{delete window[cbName]}catch(e){}
+    try{script.remove()}catch(e){}
     cb(true);
   };
   
-  form.submit();
+  var script=document.createElement("script");
+  script.src=SCRIPT_URL+"?"+params.toString();
+  script.onerror=function(){
+    if(done)return;done=true;
+    try{delete window[cbName]}catch(e){}
+    try{script.remove()}catch(e){}
+    cb(false);
+  };
+  document.head.appendChild(script);
   
   setTimeout(function(){
     if(done)return;done=true;
-    try{iframe.remove();form.remove()}catch(e){}
-    cb(true);
-  },10000);
+    try{delete window[cbName]}catch(e){}
+    try{script.remove()}catch(e){}
+    cb(false);
+  },15000);
 }
 
 // READING data: use JSONP (script tag injection)
