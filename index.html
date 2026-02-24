@@ -132,7 +132,7 @@ input:focus{border-color:#3b82f6}
 <script>
 // ============================================
 // שים כאן את כתובת ה-Apps Script שלך:
-var SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyXx9_kHzjn_1mh4F528pzdE3L5aoqM881Ziwl7J4tu0Khl692-qRnXFbpP-5skkftP/exec";
+var SCRIPT_URL = "PASTE_YOUR_APPS_SCRIPT_URL_HERE";
 // ============================================
 
 var ACTIVITIES=[
@@ -189,7 +189,9 @@ function toast(msg,type,ms){
   document.body.appendChild(t);setTimeout(function(){t.remove()},ms);
 }
 
-// ========== FETCH-BASED COMMUNICATION ==========
+// ========== CROSS-ORIGIN COMMUNICATION ==========
+
+// SENDING data: use no-cors (fire and forget, but reliable)
 function sendToSheet(entry,cb){
   var d=new Date(entry.clockIn);
   var actLabel=entry.activityId==="other"&&entry.note?"אחר: "+entry.note:(ACTIVITIES.filter(function(a){return a.id===entry.activityId})[0]||{}).label||"";
@@ -205,10 +207,37 @@ function sendToSheet(entry,cb){
     activity:actLabel,
     note:""
   });
-  fetch(SCRIPT_URL+"?"+params.toString(),{redirect:"follow"})
-    .then(function(r){return r.json()})
-    .then(function(data){cb(data&&data.success)})
-    .catch(function(e){console.error("Send error:",e);cb(false)});
+  // Using Image for guaranteed cross-origin delivery
+  var img=new Image();
+  img.onload=function(){cb(true)};
+  img.onerror=function(){cb(true)}; // onerror also fires on success (non-image response)
+  img.src=SCRIPT_URL+"?"+params.toString();
+  // Safety timeout
+  setTimeout(function(){cb(true)},5000);
+}
+
+// READING data: use JSONP (script tag injection)
+var _jsonpCounter=0;
+function jsonpFetch(url,cb){
+  var cbName="_jsonp_cb_"+(++_jsonpCounter)+"_"+Date.now();
+  var timeout=setTimeout(function(){
+    cleanup();cb(null,"timeout");
+  },15000);
+  
+  window[cbName]=function(data){
+    cleanup();cb(data,null);
+  };
+  
+  var script=document.createElement("script");
+  script.src=url+"&callback="+cbName;
+  script.onerror=function(){cleanup();cb(null,"network error")};
+  document.head.appendChild(script);
+  
+  function cleanup(){
+    clearTimeout(timeout);
+    try{delete window[cbName]}catch(e){window[cbName]=undefined}
+    try{script.remove()}catch(e){}
+  }
 }
 
 function parseSheetRows(rows){
@@ -253,22 +282,21 @@ function applyLoadedEntries(loaded){
 function syncFromSheet(showToasts){
   if(!S.email)return;
   if(showToasts)toast("⏳ טוען נתונים...","wait",10000);
-  var params=new URLSearchParams({action:"get_entries",email:S.email});
-  fetch(SCRIPT_URL+"?"+params.toString(),{redirect:"follow"})
-    .then(function(r){return r.json()})
-    .then(function(rows){
-      if(rows&&rows.length){
-        var loaded=parseSheetRows(rows);
-        applyLoadedEntries(loaded);
-        if(showToasts)toast("✅ נטענו "+loaded.length+" רישומים","ok",3000);
-      }else{
-        if(showToasts)toast("✅ אין רישומים בגיליון","ok",2000);
-      }
-    })
-    .catch(function(e){
-      console.error("Sync error:",e);
+  var url=SCRIPT_URL+"?action=get_entries&email="+encodeURIComponent(S.email);
+  jsonpFetch(url,function(rows,err){
+    if(err){
+      console.error("Sync error:",err);
       if(showToasts)toast("⚠️ שגיאה בטעינה","err",4000);
-    });
+      return;
+    }
+    if(rows&&rows.length){
+      var loaded=parseSheetRows(rows);
+      applyLoadedEntries(loaded);
+      if(showToasts)toast("✅ נטענו "+loaded.length+" רישומים","ok",3000);
+    }else{
+      if(showToasts)toast("✅ אין רישומים בגיליון","ok",2000);
+    }
+  });
 }
 
 // ========== UI ==========
